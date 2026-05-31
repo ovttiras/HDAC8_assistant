@@ -16,7 +16,7 @@ catboost==1.2.10
 smiles-rnn
 molscore
 useful-rdkit-utils
---index-url https://download.pytorch.org/whl/cu121
+--extra-index-url https://download.pytorch.org/whl/cu121
 torch
 torchvision
 torchaudio
