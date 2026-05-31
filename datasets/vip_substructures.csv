@@ -1,0 +1,15 @@
+name smarts
+KRFP1310 [!#1]C(=O)[NH][OH]
+KRFP4835 ONC=O
+KRFP4287 NCc1ccccc1
+KRFP4142 NC(=O)C=Cc1ccccc1
+KRFP2986 C=C
+KRFP1645 [!#1]c1[cH][cH]c([!#1])c([!#1])[cH]1
+KRFP2667 [!#1]O[CH3]
+KRFP1642 [!#1]c1[cH][cH]c([!#1])[cH][cH]1
+KRFP2142 [!#1]c1n[nH]c([!#1])c1[!#1]
+PubchemFP514 O-N-C-C
+PubchemFP308 [OH]
+PubchemFP602 O=C-C-N-C
+PubchemFP696 C-C-C-C-C-C-C-C
+PubchemFP346 C(~C)(~H)(~O)

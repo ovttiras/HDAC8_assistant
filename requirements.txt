@@ -1,0 +1,22 @@
+click>=8.1.0,<9
+matplotlib==3.9.4
+molvs==0.1.1
+numpy==2.2.2
+pandas==2.2.3
+rdkit==2024.09.1
+scikit-learn==1.5.2
+stmol==0.0.9
+padelpy==0.1.11
+ipython==8.29.0
+streamlit==1.41.1
+python-math==0.0.1
+./streamlit_ketcher-0.0.1-py2.py3-none-any.whl
+altair>=5.4.0,<6
+catboost==1.2.10
+smiles-rnn
+molscore
+useful-rdkit-utils
+--index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
