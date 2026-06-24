@@ -2,28 +2,21 @@
 # Import libraries
 ######################
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from numpy import loadtxt
 import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit_ketcher import st_ketcher
-import joblib
 import pickle
 from PIL import Image
 from rdkit import Chem, DataStructs, RDLogger
 from rdkit.Chem import Draw
 from rdkit.Chem import AllChem, Descriptors
-from rdkit.ML.Descriptors import MoleculeDescriptors
 from rdkit.Chem.Fingerprints import FingerprintMols
-from sklearn import metrics
 from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import NearestNeighbors
-from IPython.display import HTML
 from molvs import standardize_smiles
 from math import pi
 import zipfile
-import base64
 from pathlib import Path
 from catboost import  CatBoostRegressor
 import time
@@ -36,7 +29,7 @@ import shutil
 import os
 import textwrap
 from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import multiprocessing as mp
 
 
@@ -44,8 +37,10 @@ import multiprocessing as mp
 # Page Title
 ######################
 
-st.write("<h1 style='text-align: center; color: #FF7F50;'> HDAC8_Predictor</h1>", unsafe_allow_html=True)
-st.write("<h3 style='text-align: center; color: #483D8B;'> The application provides an alternative method for assessing the potential of chemicals to be HDAC8 inhibitors.</h3>", unsafe_allow_html=True)
+st.set_page_config(page_title="HDAC8 Assistant", layout="wide")
+
+st.write("<h1 style='text-align: center; color: #FF7F50;'> HDAC8 Assistant</h1>", unsafe_allow_html=True)
+st.write("<h3 style='text-align: center; color: #483D8B;'> The app enables the generation and evaluation of chemicals as HDAC8 inhibitors.</h3>", unsafe_allow_html=True)
 
 hide_streamlit_style = """
             <style>
@@ -54,35 +49,33 @@ hide_streamlit_style = """
             </style>
             """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True) 
-
-hide_streamlit_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            </style>
-            """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 
 with col1:
+   st.header("Molecule generation")
+   st.image("figures/molecule.png", width=125)
+   st.text_area('Text to analyze', '''This application generates candidate HDAC8 inhibitors using a SMILES-RNN model pretrained on ChEMBL drug-like compounds. The model is optimized via reinforcement learning (REINVENT) to maximize predicted pIC50 values and ensure applicability domain compliance. An ECFP4-based CatBoost QSAR model serves as the core of the RL reward function. Generated structures undergo deduplication, validity checks, and optional ring-system filtering; they are then ranked by predicted activity and annotated with synthetic accessibility scores (SAScore) and Muegge drug-likeness criteria.''', height=350, label_visibility="hidden" )
+
+
+with col2:
    st.header("Machine learning")
    st.image("figures/machine-learning.png", width=125)
    st.text_area('Text to analyze', '''This application makes predictions based on Quantitative Structure-Activity Relationship (QSAR) models build on curated datasets generated from scientific articles. The  models were developed using open-source chemical descriptors based on ECFP4, along with the gradient boosting method''', height=350, label_visibility="hidden" )
 
 
-with col2:
+with col3:
    st.header("OECD rules")
    st.image("figures/target.png", width=125)
    st.text_area('Text to analyze', '''We follow the best practices for model development and validation recommended by guidelines of the Organization for Economic Cooperation and Development (OECD). The applicability domain (AD) of the models was calculated as Dcutoff = ⟨D⟩ + Zs, where «Z» is a similarity threshold parameter defined by a user (0.5 in this study) and «⟨D⟩» and «s» are the average and standard deviation, respectively, of all Euclidian distances in the multidimensional descriptor space between each compound and its nearest neighbors for all compounds in the training set. ''', height=350, label_visibility="hidden" )
 # st.write('Sentiment:', run_sentiment_analysis(txt))
 
 
-with col3:
+with col4:
    st.header("Muegge's rules")
    st.image("figures/puzzle-piece.png", width=125)
    st.text_area('Text to analyze', '''Estimating the drug-likeness of a compound is an important factor in drug development. Muegge's drug-likeness rules were introduced to estimate the potential of a compound to be a drug. Our drug-likeness radar is displayed for a quick assessment of the compliance of the tested compound with the Muegge rules. The application also provides structural analysis for identifying preferred or undesirable molecular fragments.''', height=350, label_visibility="hidden" )
-with col4:
+with col5:
    st.header("Structural Alerts")
    st.image("figures/alert.png", width=125)
    st.text_area('Text to analyze', '''Brenk filters which consists in a list of 105 fragments to be putatively toxic, chemically reactive, metabolically unstable or to bear properties responsible for poor pharmacokinetics. PAINS  are molecules containing substructures showing potent response in assays irrespective of the protein target. Such fragments, yielding false positive biological output.''', height=350, label_visibility="hidden" )
@@ -91,7 +84,7 @@ with open("manual.pdf", "rb") as file:
     btn=st.download_button(
     label="Click to download brief manual",
     data=file,
-    file_name="manual of HDAC8_Predictor web application.pdf",
+    file_name="manual of HDAC8 Assistant web application.pdf",
     mime="application/octet-stream"
 )
 
@@ -101,7 +94,7 @@ def rdkit_numpy_convert(f_vs):
         arr = np.zeros((1,))
         DataStructs.ConvertToNumpyArray(f, arr)
         output.append(arr)
-        return np.asarray(output)
+    return np.asarray(output)
 
 def try_parse_smiles_from_ketcher(s):
     """
@@ -153,13 +146,30 @@ def _prepare_smiles_rnn_assets(base_dir: Path):
     assets = {
         "reinforcement_learning.py": "https://raw.githubusercontent.com/MorganCThomas/SMILES-RNN/main/scripts/reinforcement_learning.py",
         "ChEMBL28pur.ckpt": "https://raw.githubusercontent.com/MorganCThomas/SMILES-RNN/main/priors/ChEMBL28pur.ckpt",
-        "fragment_005_similarity.json": "https://raw.githubusercontent.com/PatWalters/practical_cheminformatics_tutorials/main/generative/data/fragment_005_similarity.json",
     }
     for filename, url in assets.items():
         _download_if_missing(url, base_dir / filename)
 
 
-def _build_smiles_rnn_config(work_dir: Path, ref_smiles: str) -> Path:
+def _ensure_hdac8_hook(rl_script_path: Path):
+    """Register HDAC8 reward class in copied reinforcement_learning.py if absent."""
+    rl_text = rl_script_path.read_text(encoding="utf-8")
+    hook = textwrap.dedent(
+        """
+        import molscore.scoring_functions as molscore_sfs
+        from hdac8_qsar_reward import HDAC8QSARReward
+
+        if all(sf.__name__ != "HDAC8QSARReward" for sf in molscore_sfs.all_scoring_functions):
+            molscore_sfs.all_scoring_functions.append(HDAC8QSARReward)
+        """
+    ).strip()
+    marker = "from molscore.manager import MolScore"
+    if hook not in rl_text:
+        rl_text = rl_text.replace(marker, marker + "\n" + hook, 1)
+        rl_script_path.write_text(rl_text, encoding="utf-8")
+
+
+def _build_smiles_rnn_config(work_dir: Path) -> Path:
     """Create per-run config with pIC50 + AD reward."""
     dst = work_dir / "smiles_rnn_config.json"
 
@@ -228,31 +238,22 @@ def _find_smiles_rnn_result_dir(search_dir: Path):
     return None
 
 
-def _stage_rl_run_files(base_dir: Path, run_dir: Path, ref_smiles: str) -> Path:
+def _stage_rl_run_files(base_dir: Path, run_dir: Path) -> Path:
     """Copy static assets from DataGeneration to run folder and build per-run config."""
     run_dir.mkdir(parents=True, exist_ok=True)
-    for filename in ("reinforcement_learning.py", "ChEMBL28pur.ckpt"):
+    for filename in (
+        "reinforcement_learning.py",
+        "ChEMBL28pur.ckpt",
+        "hdac8_qsar_reward.py",
+        "sitecustomize.py",
+    ):
         src = base_dir / filename
         if not src.exists():
             raise RuntimeError(f"Required asset is missing: {src}")
         shutil.copy2(src, run_dir / filename)
 
     # Register custom scoring class in copied reinforcement_learning.py.
-    rl_script = run_dir / "reinforcement_learning.py"
-    rl_text = rl_script.read_text(encoding="utf-8")
-    hook = textwrap.dedent(
-        """
-        import molscore.scoring_functions as molscore_sfs
-        from hdac8_qsar_reward import HDAC8QSARReward
-
-        if all(sf.__name__ != "HDAC8QSARReward" for sf in molscore_sfs.all_scoring_functions):
-            molscore_sfs.all_scoring_functions.append(HDAC8QSARReward)
-        """
-    ).strip()
-    marker = "from molscore.manager import MolScore"
-    if hook not in rl_text:
-        rl_text = rl_text.replace(marker, marker + "\n" + hook, 1)
-        rl_script.write_text(rl_text, encoding="utf-8")
+    _ensure_hdac8_hook(run_dir / "reinforcement_learning.py")
 
     # Extract QSAR assets used by reward function.
     model_zip = Path("Models") / "CatBoost_MF.zip"
@@ -264,103 +265,7 @@ def _stage_rl_run_files(base_dir: Path, run_dir: Path, ref_smiles: str) -> Path:
     with zipfile.ZipFile(xtr_zip) as zf:
         zf.extract("x_tr_MF.csv", path=run_dir)
 
-    # Custom MolScore scoring function: pIC50 prediction + AD check.
-    reward_path = run_dir / "hdac8_qsar_reward.py"
-    reward_path.write_text(
-        textwrap.dedent(
-            """
-            import pickle
-            import numpy as np
-            import pandas as pd
-            from rdkit import Chem
-            from rdkit.Chem import AllChem
-            from sklearn.neighbors import NearestNeighbors
-
-
-            class HDAC8QSARReward:
-                return_metrics = ["pIC50", "in_AD"]
-
-                def __init__(
-                    self,
-                    prefix,
-                    model_path,
-                    xtr_path,
-                    model_ad_limit=4.13,
-                    nBits=1024,
-                    radius=2,
-                    n_jobs=1,
-                    **kwargs
-                ):
-                    self.prefix = prefix.replace(" ", "_")
-                    self.model_ad_limit = float(model_ad_limit)
-                    self.nBits = int(nBits)
-                    self.radius = int(radius)
-
-                    with open(model_path, "rb") as f:
-                        self.model = pickle.load(f)
-
-                    x_tr = pd.read_csv(xtr_path).to_numpy()
-                    self.nbrs = NearestNeighbors(n_neighbors=1, algorithm="ball_tree", n_jobs=1)
-                    self.nbrs.fit(x_tr)
-
-                def _fp(self, smi):
-                    mol = Chem.MolFromSmiles(smi)
-                    if mol is None:
-                        return None
-                    fp = AllChem.GetMorganFingerprintAsBitVect(
-                        mol, radius=self.radius, nBits=self.nBits, useFeatures=False, useChirality=False
-                    )
-                    return np.asarray(fp, dtype=float).reshape(1, -1)
-
-                def __call__(self, smiles, **kwargs):
-                    results = []
-                    for smi in smiles:
-                        rec = {
-                            "smiles": smi,
-                            f"{self.prefix}_pIC50": 0.0,
-                            f"{self.prefix}_in_AD": 0.0,
-                        }
-                        X = self._fp(smi)
-                        if X is None:
-                            results.append(rec)
-                            continue
-
-                        pred = float(self.model.predict(X)[0])
-                        dist, _ = self.nbrs.kneighbors(X)
-                        in_ad = 1.0 if float(dist[0, 0]) <= self.model_ad_limit else 0.0
-
-                        rec[f"{self.prefix}_pIC50"] = pred
-                        rec[f"{self.prefix}_in_AD"] = in_ad
-                        results.append(rec)
-                    return results
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-
-    # Compatibility shim for torch>=2.6 where torch.load defaults to weights_only=True.
-    # smiles-rnn checkpoints require full pickle loading for trusted local checkpoints.
-    sitecustomize_path = run_dir / "sitecustomize.py"
-    sitecustomize_path.write_text(
-        "\n".join(
-            [
-                "import torch",
-                "",
-                "_orig_torch_load = torch.load",
-                "",
-                "def _patched_torch_load(*args, **kwargs):",
-                "    kwargs.setdefault('weights_only', False)",
-                "    return _orig_torch_load(*args, **kwargs)",
-                "",
-                "torch.load = _patched_torch_load",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    return _build_smiles_rnn_config(run_dir, ref_smiles)
+    return _build_smiles_rnn_config(run_dir)
 
 
 def _run_smiles_rnn_rl(
@@ -368,6 +273,7 @@ def _run_smiles_rnn_rl(
     config_path: Path,
     n_steps: int = 250,
     batch_size: int = 128,
+    progress_callback=None,
 ):
     """Execute reinforcement learning generation using SMILES-RNN."""
     if importlib.util.find_spec("smilesrnn") is None or importlib.util.find_spec("molscore") is None:
@@ -402,22 +308,48 @@ def _run_smiles_rnn_rl(
         "--batch_size",
         str(int(batch_size)),
     ]
-    completed = subprocess.run(
-        command,
-        cwd=str(work_dir),
-        capture_output=True,
-        text=True,
-        timeout=3600,
-        env={**os.environ, "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"},
-        check=False,
-    )
-    if completed.returncode != 0:
-        stderr_tail = (completed.stderr or "")[-4000:]
-        stdout_tail = (completed.stdout or "")[-2000:]
+    stdout_log = work_dir / "rl_stdout.log"
+    stderr_log = work_dir / "rl_stderr.log"
+    stdout_log.write_text("", encoding="utf-8")
+    stderr_log.write_text("", encoding="utf-8")
+    with open(stdout_log, "a", encoding="utf-8", errors="replace") as out_f, open(
+        stderr_log, "a", encoding="utf-8", errors="replace"
+    ) as err_f:
+        process = subprocess.Popen(
+            command,
+            cwd=str(work_dir),
+            stdout=out_f,
+            stderr=err_f,
+            text=True,
+            env={**os.environ, "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"},
+        )
+        start_ts = time.time()
+        timeout_seconds = 3600
+        last_reported_step = -1
+        if progress_callback is not None:
+            progress_callback(0, int(n_steps))
+
+        while process.poll() is None:
+            if time.time() - start_ts > timeout_seconds:
+                process.kill()
+                raise RuntimeError(f"SMILES-RNN RL run timed out after {timeout_seconds} seconds.")
+
+            step_files = list(work_dir.glob("**/iterations/*_scores.csv"))
+            current_step = min(len(step_files), int(n_steps))
+            if progress_callback is not None and current_step != last_reported_step:
+                progress_callback(current_step, int(n_steps))
+                last_reported_step = current_step
+            time.sleep(0.5)
+
+    if process.returncode != 0:
+        stderr_tail = stderr_log.read_text(encoding="utf-8", errors="replace")[-4000:]
+        stdout_tail = stdout_log.read_text(encoding="utf-8", errors="replace")[-2000:]
         raise RuntimeError(
             f"SMILES-RNN RL run failed (device={device}).\n"
             f"stdout tail:\n{stdout_tail}\n\nstderr tail:\n{stderr_tail}"
         )
+    if progress_callback is not None:
+        progress_callback(int(n_steps), int(n_steps))
     return {"device": device, "n_steps": int(n_steps), "batch_size": int(batch_size)}
 
 
@@ -509,11 +441,10 @@ def check_muegge_rule(mol):
 
 
 def run_smiles_rnn_pipeline(
-    ref_smiles: str,
     max_molecules: int = 500,
-    apply_reos_filter: bool = False,
     n_steps: int = 250,
     batch_size: int = 128,
+    progress_callback=None,
 ):
     """
     Run notebook-inspired RL pipeline and return filtered generated molecules.
@@ -525,12 +456,13 @@ def run_smiles_rnn_pipeline(
     run_dir = base_dir / "runs" / timestamp
 
     _prepare_smiles_rnn_assets(base_dir)
-    config_path = _stage_rl_run_files(base_dir, run_dir, ref_smiles)
+    config_path = _stage_rl_run_files(base_dir, run_dir)
     run_meta = _run_smiles_rnn_rl(
         run_dir,
         config_path,
         n_steps=n_steps,
         batch_size=batch_size,
+        progress_callback=progress_callback,
     )
     result_dir = _find_smiles_rnn_result_dir(run_dir)
 
@@ -550,7 +482,7 @@ def run_smiles_rnn_pipeline(
     df_ok = df_ok.drop_duplicates(subset=["cansmi"]).copy()
     valid_unique_count = len(df_ok)
 
-    # Optional quality stage (ring-system; REOS by user choice) if useful_rdkit_utils is available.
+    # Optional quality stage (ring-system filter) if useful_rdkit_utils is available.
     warning_note = None
     df_filtered = df_ok.copy()
     try:
@@ -561,11 +493,6 @@ def run_smiles_rnn_pipeline(
         ring_freq = [uru.get_min_ring_frequency(x) for x in df_filtered["ring_systems"]]
         df_filtered[["min_ring", "min_freq"]] = ring_freq
         df_filtered = df_filtered.query("min_freq > 100 or min_freq < 0").copy()
-
-        if apply_reos_filter:
-            reos = uru.REOS()
-            df_filtered[["rule_set", "rule"]] = df_filtered["mol"].apply(reos.process_mol).to_list()
-            df_filtered = df_filtered.query("rule == 'ok'").copy()
     except Exception:
         warning_note = (
             "Quality filters were skipped because `useful_rdkit_utils` is unavailable."
@@ -584,7 +511,6 @@ def run_smiles_rnn_pipeline(
             "result_dir": str(result_dir),
             "run_dir": str(run_dir),
             "device_used": run_meta.get("device", "unknown"),
-            "reos_applied": bool(apply_reos_filter),
             "n_steps_used": run_meta.get("n_steps", int(n_steps)),
             "batch_size_used": run_meta.get("batch_size", int(batch_size)),
             "warning": warning_note,
@@ -692,7 +618,6 @@ def run_smiles_rnn_pipeline(
         "result_dir": str(result_dir),
         "run_dir": str(run_dir),
         "device_used": run_meta.get("device", "unknown"),
-        "reos_applied": bool(apply_reos_filter),
         "n_steps_used": run_meta.get("n_steps", int(n_steps)),
         "batch_size_used": run_meta.get("batch_size", int(batch_size)),
         "warning": warning_note,
@@ -764,10 +689,10 @@ def load_training_data_hdac():
 @st.cache_data
 def load_structural_alerts():
     """Кэшированная загрузка структурных алертов"""
-    pains_df = pd.read_csv('datasets/PAINS.csv', sep='\s+')
-    brenk_df = pd.read_csv('datasets/unwanted_substructures.csv', sep='\s+')
-    tox_df = pd.read_csv('datasets/tox_alerts_list.csv', sep='\s+')
-    vip_df = pd.read_csv('datasets/vip_substructures.csv', sep='\s+')
+    pains_df = pd.read_csv('datasets/PAINS.csv', sep=r'\s+')
+    brenk_df = pd.read_csv('datasets/unwanted_substructures.csv', sep=r'\s+')
+    tox_df = pd.read_csv('datasets/tox_alerts_list.csv', sep=r'\s+')
+    vip_df = pd.read_csv('datasets/vip_substructures.csv', sep=r'\s+')
     
     return {
         'pains': [(row['name'], Chem.MolFromSmarts(row['smarts'])) for _, row in pains_df.iterrows()],
@@ -1441,7 +1366,7 @@ class Med_chem_one():
             self.substructures_df = None  # Не нужен для кэшированных данных
         else:
             # Fallback к старому методу
-            self.substructures_df = pd.read_csv(self.way_exp_data, sep="\s+")
+            self.substructures_df = pd.read_csv(self.way_exp_data, sep=r"\s+")
             self.substructure_mols = [(row['name'], Chem.MolFromSmarts(row['smarts'])) for _, row in self.substructures_df.iterrows()]
         if self.propetis=='structural alerts' or 'tox' in way_exp_data:
             # Creating a topological fingerprint for the original molecule
@@ -1605,280 +1530,106 @@ if (files_option1  =='*CSV file containing SMILES' or files_option1=='MDL multip
         status_text.empty()
 
 
-_smiles_rnn_input_single = files_option1 in (
-    'Draw the molecule and click the "Apply" button',
-    'SMILES',
-)
-_smiles_rnn_input_csv = files_option1 == '*CSV file containing SMILES'
-if _smiles_rnn_input_single or _smiles_rnn_input_csv:
-    if files_option2 == 'Molecule generation (SMILES-RNN)':
-        st.write(
-            "Run SMILES-RNN RL locally. Final results include only molecules inside AD, "
-            "and exclude compounds that match the experimental pIC50 dataset (HDAC8_exp_data_inchi.csv)."
-        )
-        if _smiles_rnn_input_csv:
-            st.caption(
-                "Multi-reference (CSV): each validated SMILES runs a full RL job; "
-                "AD-passing candidates are merged, deduplicated by canonical SMILES, "
-                "sorted by predicted pIC50 (high to low), then the top N rows you choose below. "
-                "Structures present in HDAC8_exp_data_inchi.csv (experimental pIC50) are excluded."
+if files_option2 == 'Molecule generation (SMILES-RNN)':
+    st.write(
+        "Run SMILES-RNN RL locally. Generation is driven solely by the HDAC8 QSAR "
+        "reward (predicted pIC50 + applicability domain); no template molecule is required. "
+        "Final results include only molecules inside AD, and exclude compounds that match "
+        "the experimental pIC50 dataset (HDAC8_exp_data_inchi.csv)."
+    )
+    st.caption("Mode: Run SMILES-RNN RL now (GPU/CPU auto-selection).")
+    max_generated = st.number_input(
+        "Maximum molecules to return",
+        min_value=50,
+        max_value=10000,
+        value=500,
+        step=50,
+        help="Max AD-passing rows kept from the RL run.",
+    )
+    n_steps_ui = st.number_input(
+        "RL n_steps",
+        min_value=1,
+        max_value=5000,
+        value=250,
+        step=10,
+    )
+    batch_size_ui = st.number_input(
+        "RL batch_size",
+        min_value=8,
+        max_value=2048,
+        value=128,
+        step=8,
+    )
+
+    if st.button('Run generation!'):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        try:
+            status_text.text("Preparing SMILES-RNN assets...")
+            progress_bar.progress(0.0)
+
+            def _on_rl_progress(current_step, expected_steps):
+                expected = max(int(expected_steps), 1)
+                current = min(max(int(current_step), 0), expected)
+                progress_bar.progress(current / expected)
+                status_text.text(f"Running RL training: step {current}/{expected}")
+
+            generated_df, summary = run_smiles_rnn_pipeline(
+                max_molecules=max_generated,
+                n_steps=n_steps_ui,
+                batch_size=batch_size_ui,
+                progress_callback=_on_rl_progress,
             )
-        st.caption("Mode: Run SMILES-RNN RL now (GPU/CPU auto-selection).")
-        max_generated = st.number_input(
-            "Maximum molecules to return",
-            min_value=50,
-            max_value=10000,
-            value=500,
-            step=50,
-            help="Per reference: max AD-passing rows kept from each RL run before global merge.",
-        )
-        n_steps_ui = st.number_input(
-            "RL n_steps",
-            min_value=1,
-            max_value=5000,
-            value=250,
-            step=10,
-        )
-        batch_size_ui = st.number_input(
-            "RL batch_size",
-            min_value=8,
-            max_value=2048,
-            value=128,
-            step=8,
-        )
-        apply_reos_filter = st.checkbox(
-            "Apply REOS reactive-group filtering",
-            value=False,
-            help="Disabled by default. Enable to remove molecules flagged by REOS.",
-        )
-        if _smiles_rnn_input_csv:
-            final_table_n = st.number_input(
-                "Molecules in final merged table",
-                min_value=1,
-                max_value=10000,
-                value=25,
-                step=1,
-                help="After merging all references: keep the top N analogs by predicted pIC50 (descending).",
+
+            status_text.text("Rendering results...")
+            progress_bar.progress(1.0)
+
+            st.header("**Generation results:**")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Initial generated", summary["initial_count"])
+            c2.metric("Valid unique", summary["valid_unique_count"])
+            c3.metric("Inside AD (returned)", summary["inside_ad_count"])
+            c4.metric(
+                "Excluded (exp. dataset)",
+                summary.get("experimental_excluded_count", 0),
             )
-        else:
-            final_table_n = None
+            if summary.get("device_used"):
+                st.caption(f"Execution mode/device: **{summary['device_used']}**")
 
-        if st.button('Run generation!'):
-            if _smiles_rnn_input_csv:
-                if 'moldf' not in locals() or not moldf:
-                    st.error(
-                        "Upload a valid CSV with a SMILES column in Step 1 first "
-                        "(kept molecules after validation)."
-                    )
-                else:
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    ref_summaries = []
-                    run_failures = []
-                    dfs_ad = []
-                    total_refs = len(moldf)
-                    try:
-                        status_text.text("Preparing SMILES-RNN assets...")
-                        progress_bar.progress(0.02)
-                        for idx, mol in enumerate(moldf):
-                            ref_smi = Chem.MolToSmiles(mol, isomericSmiles=True)
-                            frac = 0.05 + (idx / max(total_refs, 1)) * 0.85
-                            status_text.text(
-                                f"Reference {idx + 1}/{total_refs}: running RL ({ref_smi[:64]}…)"
-                                if len(ref_smi) > 64
-                                else f"Reference {idx + 1}/{total_refs}: running RL ({ref_smi})"
-                            )
-                            progress_bar.progress(min(frac, 0.9))
-                            try:
-                                gdf, summary = run_smiles_rnn_pipeline(
-                                    ref_smiles=ref_smi,
-                                    max_molecules=max_generated,
-                                    apply_reos_filter=apply_reos_filter,
-                                    n_steps=n_steps_ui,
-                                    batch_size=batch_size_ui,
-                                )
-                                ref_summaries.append(
-                                    {
-                                        "ref_index": idx + 1,
-                                        "ref_smiles": ref_smi,
-                                        "summary": summary,
-                                    }
-                                )
-                                if summary.get("warning"):
-                                    st.warning(
-                                        f"Reference {idx + 1} ({ref_smi[:48]}…): {summary['warning']}"
-                                        if len(ref_smi) > 48
-                                        else f"Reference {idx + 1}: {summary['warning']}"
-                                    )
-                                if not gdf.empty:
-                                    dfs_ad.append(gdf.drop(columns=["No."], errors="ignore"))
-                            except Exception as e:
-                                run_failures.append((idx + 1, ref_smi, str(e)))
-                                st.warning(f"Reference {idx + 1} failed: {e}")
+            if summary.get("warning"):
+                st.warning(summary["warning"])
 
-                        n_final = int(final_table_n)
-                        status_text.text(
-                            f"Merging, deduplicating, and selecting top {n_final}…"
-                        )
-                        progress_bar.progress(0.93)
-
-                        st.header("**Generation results (multi-reference):**")
-                        c0, c1, c2 = st.columns(3)
-                        c0.metric("Reference SMILES processed", f"{len(ref_summaries)}/{total_refs}")
-                        c1.metric("References with RL errors", len(run_failures))
-                        merged_rows = int(sum(len(d) for d in dfs_ad)) if dfs_ad else 0
-                        c2.metric("AD rows before merge / dedup", merged_rows)
-                        total_exp_excl = sum(
-                            e["summary"].get("experimental_excluded_count", 0)
-                            for e in ref_summaries
-                        )
-                        st.caption(
-                            "Excluded as matches to **HDAC8_exp_data_inchi.csv** (experimental pIC50): "
-                            f"**{total_exp_excl}** molecule(s) across references (before merge)."
-                        )
-
-                        if not dfs_ad:
-                            st.info("No molecules passed the selected filtering criteria for any reference.")
-                        else:
-                            merged = pd.concat(dfs_ad, ignore_index=True)
-                            merged = merged.sort_values(
-                                "predicted_pIC50", ascending=False, na_position="last"
-                            )
-                            merged = merged.drop_duplicates(
-                                subset=["canonical_smiles"], keep="first"
-                            )
-                            merged = merged.sort_values(
-                                "predicted_pIC50", ascending=False, na_position="last"
-                            )
-                            final_df = merged.head(n_final).copy()
-                            final_df["No."] = range(1, len(final_df) + 1)
-                            preferred = [
-                                "No.",
-                                "generated_smiles",
-                                "canonical_smiles",
-                                "predicted_pIC50",
-                                "SAScore",
-                                "in_AD",
-                                "Muegge rules",
-                            ]
-                            final_df = final_df[[c for c in preferred if c in final_df.columns]]
-
-                            c3, c4, c5 = st.columns(3)
-                            c3.metric("Unique canonical (after dedup)", len(merged))
-                            c4.metric("Top pIC50 rows returned", len(final_df))
-                            if ref_summaries and ref_summaries[-1]["summary"].get("device_used"):
-                                st.caption(
-                                    f"Execution mode/device (last ref): **{ref_summaries[-1]['summary']['device_used']}**"
-                                )
-                            st.caption(
-                                f"REOS filtering: **{'enabled' if apply_reos_filter else 'disabled'}**"
-                            )
-
-                            st.dataframe(final_df.set_index("No."))
-                            st.download_button(
-                                label=f"Download top {len(final_df)} generated molecules as CSV",
-                                data=final_df.to_csv(index=False),
-                                file_name=f"Generated_top{len(final_df)}_multi_ref_SMILES_RNN.csv",
-                                mime="text/csv",
-                            )
-
-                        with st.expander("Pipeline details (per reference)"):
-                            for entry in ref_summaries:
-                                s = entry["summary"]
-                                st.markdown(
-                                    f"**Ref {entry['ref_index']}** — `{entry['ref_smiles'][:80]}{'…' if len(entry['ref_smiles']) > 80 else ''}`"
-                                )
-                                st.write(
-                                    f"n_steps: {s['n_steps_used']}, batch_size: {s['batch_size_used']}, "
-                                    f"inside AD (returned): {s['inside_ad_count']}, "
-                                    f"excluded (exp. pIC50 in dataset): {s.get('experimental_excluded_count', 0)}, "
-                                    f"run_dir: `{s['run_dir']}`"
-                                )
-                            if run_failures:
-                                st.markdown("**Failed references**")
-                                for ri, rsmi, msg in run_failures:
-                                    st.write(f"- Ref {ri}: `{rsmi[:80]}…` — {msg}" if len(rsmi) > 80 else f"- Ref {ri}: `{rsmi}` — {msg}")
-
-                        progress_bar.progress(1.0)
-                        status_text.text("Generation completed!")
-                    except Exception as e:
-                        st.error(f"Molecule generation failed: {e}")
-                    finally:
-                        progress_bar.empty()
-                        status_text.empty()
-
+            if generated_df.empty:
+                st.info("No molecules passed the selected filtering criteria.")
             else:
-                if 'smiles' not in locals() or not smiles:
-                    st.error("Please provide a valid molecule in Step 1 first.")
-                else:
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    try:
-                        status_text.text("Preparing SMILES-RNN assets...")
-                        progress_bar.progress(0.2)
+                st.dataframe(generated_df.set_index("No."))
+                st.download_button(
+                    label="Download generated molecules as CSV",
+                    data=generated_df.to_csv(index=False),
+                    file_name="Generated_molecules_SMILES_RNN.csv",
+                    mime="text/csv",
+                )
 
-                        status_text.text("Running molecule generation pipeline...")
-                        progress_bar.progress(0.5)
-                        generated_df, summary = run_smiles_rnn_pipeline(
-                            ref_smiles=smiles,
-                            max_molecules=max_generated,
-                            apply_reos_filter=apply_reos_filter,
-                            n_steps=n_steps_ui,
-                            batch_size=batch_size_ui,
-                        )
+            with st.expander("Pipeline details"):
+                st.write(f"RL n_steps: {summary['n_steps_used']}")
+                st.write(f"RL batch_size: {summary['batch_size_used']}")
+                st.write(f"Run directory: `{summary['run_dir']}`")
+                st.write(f"Results directory: `{summary['result_dir']}`")
+                st.write(f"Unique after first deduplication: {summary['unique_count']}")
+                st.write(f"Invalid SMILES removed: {summary['invalid_count']}")
+                st.write(f"After quality filters: {summary['post_quality_filter_count']}")
+                st.write(
+                    "Excluded (match experimental pIC50 / HDAC8_exp_data_inchi.csv): "
+                    f"{summary.get('experimental_excluded_count', 0)}"
+                )
 
-                        status_text.text("Rendering results...")
-                        progress_bar.progress(0.85)
-
-                        st.header("**Generation results:**")
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("Initial generated", summary["initial_count"])
-                        c2.metric("Valid unique", summary["valid_unique_count"])
-                        c3.metric("Inside AD (returned)", summary["inside_ad_count"])
-                        c4.metric(
-                            "Excluded (exp. dataset)",
-                            summary.get("experimental_excluded_count", 0),
-                        )
-                        if summary.get("device_used"):
-                            st.caption(f"Execution mode/device: **{summary['device_used']}**")
-                        st.caption(
-                            f"REOS filtering: **{'enabled' if summary.get('reos_applied') else 'disabled'}**"
-                        )
-
-                        if summary.get("warning"):
-                            st.warning(summary["warning"])
-
-                        if generated_df.empty:
-                            st.info("No molecules passed the selected filtering criteria.")
-                        else:
-                            st.dataframe(generated_df.set_index("No."))
-                            st.download_button(
-                                label="Download generated molecules as CSV",
-                                data=generated_df.to_csv(index=False),
-                                file_name="Generated_molecules_SMILES_RNN.csv",
-                                mime="text/csv",
-                            )
-
-                        with st.expander("Pipeline details"):
-                            st.write(f"RL n_steps: {summary['n_steps_used']}")
-                            st.write(f"RL batch_size: {summary['batch_size_used']}")
-                            st.write(f"Run directory: `{summary['run_dir']}`")
-                            st.write(f"Results directory: `{summary['result_dir']}`")
-                            st.write(f"Unique after first deduplication: {summary['unique_count']}")
-                            st.write(f"Invalid SMILES removed: {summary['invalid_count']}")
-                            st.write(f"After quality filters: {summary['post_quality_filter_count']}")
-                            st.write(
-                                "Excluded (match experimental pIC50 / HDAC8_exp_data_inchi.csv): "
-                                f"{summary.get('experimental_excluded_count', 0)}"
-                            )
-
-                        progress_bar.progress(1.0)
-                        status_text.text("Generation completed!")
-                    except Exception as e:
-                        st.error(f"Molecule generation failed: {e}")
-                    finally:
-                        progress_bar.empty()
-                        status_text.empty()
+            progress_bar.progress(1.0)
+            status_text.text("Generation completed!")
+        except Exception as e:
+            st.error(f"Molecule generation failed: {e}")
+        finally:
+            progress_bar.empty()
+            status_text.empty()
 
 
 
