@@ -1,65 +1,24 @@
-import pickle
-
-import numpy as np
-import pandas as pd
-from rdkit import Chem
-from rdkit.Chem import AllChem
-from sklearn.neighbors import NearestNeighbors
+from hdac8_consensus import HDAC8ConsensusModel
 
 
 class HDAC8QSARReward:
-    return_metrics = ["pIC50", "in_AD"]
+    return_metrics = ["pIC50", "sigma_consensus", "d_nearest", "in_AD"]
 
-    def __init__(
-        self,
-        prefix,
-        model_path,
-        xtr_path,
-        model_ad_limit=4.13,
-        nBits=1024,
-        radius=2,
-        n_jobs=1,
-        **kwargs,
-    ):
-        self.prefix = prefix.replace(" ", "_")
-        self.model_ad_limit = float(model_ad_limit)
-        self.nBits = int(nBits)
-        self.radius = int(radius)
-
-        with open(model_path, "rb") as f:
-            self.model = pickle.load(f)
-
-        x_tr = pd.read_csv(xtr_path).to_numpy()
-        self.nbrs = NearestNeighbors(n_neighbors=1, algorithm="ball_tree", n_jobs=1)
-        self.nbrs.fit(x_tr)
-
-    def _fp(self, smi):
-        mol = Chem.MolFromSmiles(smi)
-        if mol is None:
-            return None
-        fp = AllChem.GetMorganFingerprintAsBitVect(
-            mol, radius=self.radius, nBits=self.nBits, useFeatures=False, useChirality=False
-        )
-        return np.asarray(fp, dtype=float).reshape(1, -1)
+    def __init__(self, prefix, models_dir, padel_threads=2, **kwargs):
+        self.prefix = str(prefix).replace(" ", "_")
+        self.model = HDAC8ConsensusModel(models_dir, padel_threads=int(padel_threads))
 
     def __call__(self, smiles, **kwargs):
+        recs = self.model.predict_smiles(list(smiles))
         results = []
-        for smi in smiles:
-            rec = {
-                "smiles": smi,
-                f"{self.prefix}_pIC50": 0.0,
-                f"{self.prefix}_in_AD": 0.0,
-            }
-            X = self._fp(smi)
-            if X is None:
-                results.append(rec)
-                continue
-
-            pred = float(self.model.predict(X)[0])
-            dist, _ = self.nbrs.kneighbors(X)
-            in_ad = 1.0 if float(dist[0, 0]) <= self.model_ad_limit else 0.0
-
-            rec[f"{self.prefix}_pIC50"] = pred
-            rec[f"{self.prefix}_in_AD"] = in_ad
-            results.append(rec)
+        for rec in recs:
+            results.append(
+                {
+                    "smiles": rec.smiles,
+                    f"{self.prefix}_pIC50": float(rec.pred) if rec.valid else 0.0,
+                    f"{self.prefix}_sigma_consensus": float(rec.sigma) if rec.valid else 0.0,
+                    f"{self.prefix}_d_nearest": float(rec.distance) if rec.valid else float("inf"),
+                    f"{self.prefix}_in_AD": 1.0 if rec.valid and rec.in_ad else 0.0,
+                }
+            )
         return results

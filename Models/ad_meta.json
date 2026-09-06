@@ -1,0 +1,21 @@
+{
+  "ad_limit": 0.1735769510269165,
+  "ad_z": 0.5,
+  "n_train": 2092,
+  "n_bits": 766,
+  "binary_families": [
+    "ECFP4",
+    "MACCS",
+    "PubChem",
+    "KlekotaRoth"
+  ],
+  "pool_sizes": {
+    "ECFP4": 200,
+    "MACCS": 116,
+    "PubChem": 200,
+    "KlekotaRoth": 250
+  },
+  "metric": "tanimoto_distance",
+  "feature_space": "shap_mrmr_binary_pools",
+  "source_sdf": "HDAC8_train.sdf"
+}

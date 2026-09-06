@@ -3,8 +3,10 @@ import argparse
 import json
 import logging
 import os
+import random
 import warnings
 
+import numpy as np
 import torch
 from molscore.manager import MolScore
 from rdkit import rdBase
@@ -20,8 +22,25 @@ ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
+DEFAULT_SEED = 42
+
+
+def set_seed(seed: int) -> None:
+    """Fix RNG state for reproducible SMILES-RNN RL generation."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 def main(args):
+    seed = int(getattr(args, "seed", DEFAULT_SEED))
+    set_seed(seed)
+    logger.info(f"Random seed set to {seed}")
+
     # Setup scoring function
     ms = MolScore(model_name="SMILES-RNN", task_config=args.molscore_config)
     ms.log_parameters(
@@ -36,6 +55,7 @@ def main(args):
                 "sigma",
                 "kl_coefficient",
                 "entropy_coefficient",
+                "seed",
             ]
             if k in vars(args).keys()
         }
@@ -43,7 +63,12 @@ def main(args):
 
     # Save these parameters for good measure
     with open(os.path.join(ms.save_dir, "SMILES-RNN.params"), "wt") as f:
-        json.dump(vars(args), f, indent=2)
+        # Device is a torch.device after setup; serialize a JSON-safe copy.
+        params = dict(vars(args))
+        params["seed"] = seed
+        if hasattr(params.get("device"), "type"):
+            params["device"] = str(params["device"])
+        json.dump(params, f, indent=2, default=str)
 
     # Setup device
     args.device = utils.get_device(args.device)
@@ -106,6 +131,12 @@ def get_args():
         "-a", "--agent", type=str, help="Path to agent checkpoint (.ckpt)"
     )
     optional.add_argument("-d", "--device", default="gpu", help="Device to use")
+    optional.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help="Random seed for Python, NumPy and PyTorch (CPU/CUDA)",
+    )
     optional.add_argument(
         "-f", "--freeze", help="Number of RNN layers to freeze", type=int
     )

@@ -124,9 +124,12 @@ def build_manual(output_path: Path) -> None:
     pdf.section_title("Step 2a. HDAC8 activity prediction")
     pdf.body(
         "Select \"HDAC8\" and click the \"Run predictions!\" button. "
-        "The QSAR model uses ECFP4 molecular fingerprints and a CatBoost gradient "
-        "boosting regressor trained on curated HDAC8 activity data from scientific "
-        "literature and ChEMBL."
+        "The QSAR model is a weighted CatBoost consensus of ECFP4, MACCS, PubChem "
+        "and Klekota-Roth fingerprint families (late fusion; simplex weights). "
+        "Uncertainty is dual-component: epistemic sigma_consensus (weighted std of "
+        "family predictions) and structural AD via nearest-neighbour Tanimoto distance "
+        "on the concatenated binary fingerprints, cutoff = mean + 0.5*SD of training "
+        "nearest neighbours. Outside-AD molecules are flagged as low confidence."
     )
     pdf.section_title("Step 3. Prediction results (HDAC8 mode)")
     pdf.body(
@@ -137,13 +140,16 @@ def build_manual(output_path: Path) -> None:
     pdf.body("The final table \"Prediction results\" contains the following columns:")
     pdf.bullet("SMILES - chemical structure in SMILES notation.")
     pdf.bullet(
-        "Predicted value pIC50 - predicted HDAC8 inhibitory activity (negative "
-        "logarithm of IC50 in molar concentration). If experimental data is available "
-        "in ChEMBL, the label \"see experimental value\" is displayed."
+        "Predicted pIC50 +/- sigma_consensus - predicted HDAC8 inhibitory activity "
+        "reported with epistemic uncertainty (weighted consensus std). If experimental "
+        "data is available in ChEMBL, the label \"see experimental value\" is displayed."
     )
     pdf.bullet(
-        "Applicability domain_HDAC8 - compliance with the model applicability domain "
-        "(AD). If experimental data is available in ChEMBL, \"-\" is displayed."
+        "d_nearest (Tanimoto) - Tanimoto distance to the nearest training-set neighbour."
+    )
+    pdf.bullet(
+        "Applicability domain_HDAC8 - AD status (Inside AD, or Outside AD / low "
+        "confidence). If experimental data is available in ChEMBL, \"-\" is displayed."
     )
     pdf.bullet(
         "Experimental value, pIC50 - experimental data from ChEMBL (average if multiple "
@@ -162,7 +168,7 @@ def build_manual(output_path: Path) -> None:
         "new candidate HDAC8 inhibitors using a SMILES-RNN model pretrained on "
         "drug-like compounds from ChEMBL. The model is optimized via reinforcement "
         "learning (REINVENT algorithm) to maximize predicted pIC50 values while "
-        "ensuring applicability-domain compliance. An ECFP4-based CatBoost QSAR model "
+        "ensuring applicability-domain compliance. A weighted CatBoost consensus QSAR model "
         "serves as the core of the RL reward function."
     )
     pdf.body("Input requirements:")
@@ -217,8 +223,15 @@ def build_manual(output_path: Path) -> None:
     pdf.body(
         "Summary metrics are displayed above the table: initial generated count, "
         "valid unique structures, inside-AD count, and excluded experimental matches. "
-        "An expandable \"Pipeline details\" section shows RL parameters and run "
-        "directories. Click \"Download generated molecules as CSV\" to save results."
+        "A Generation quality report then lists publication metrics: total generated "
+        "structures, validity, uniqueness, novelty versus the experimental HDAC8 set "
+        "(HDAC8_exp_data_inchi.csv), proportion inside the applicability domain, "
+        "and predicted pIC50 distributions. The summary table compares generator step 0 "
+        "(prior model, before RL) with all RL steps 1–N (agent model). "
+        "Download buttons save generation_quality_comparison.csv, "
+        "generation_quality_metrics.csv. "
+        "An expandable Pipeline details section shows RL parameters and run directories. Click "
+        "Download generated molecules as CSV to save the ranked candidate list."
     )
     pdf.body(
         "For multi-reference CSV input, results from all references are merged, "
